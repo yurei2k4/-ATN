@@ -224,16 +224,26 @@ class Visualizer:
     def plot_routes_folium(
         self,
         output_path: str = 'routes_map.html',
-        center_lat: float = 10.7769,   # Mặc định: TP.HCM
-        center_lon: float = 106.7009,
+        center_lat: float = None,
+        center_lon: float = None,
+        auto_detect_coords: bool = True,
     ) -> str:
         """
         Tạo bản đồ tương tác Folium cho dữ liệu thực tế.
-        
-        Sử dụng khi nodes có tọa độ lat/lon thực tế.
-        
+
+        Lưu ý quan trọng:
+            - Chỉ dùng với dữ liệu có tọa độ lat/lon thực tế (từ OSRMClient).
+            - Dữ liệu Solomon/synthetic dùng tọa độ Euclidean (0–100), KHÔNG
+              phải lat/lon, nên bản đồ sẽ không hiển thị đúng địa lý.
+            - Hàm sẽ tự phát hiện và cảnh báo nếu dữ liệu là synthetic.
+
+        Args:
+            output_path        : Đường dẫn lưu file HTML
+            center_lat, center_lon: Tâm bản đồ (None = tự tính từ trung bình tọa độ)
+            auto_detect_coords : Tự phát hiện dữ liệu synthetic và cảnh báo
+
         Returns:
-            Đường dẫn file HTML
+            Đường dẫn file HTML đã lưu, hoặc '' nếu lỗi
         """
         try:
             import folium
@@ -241,54 +251,138 @@ class Visualizer:
             print("folium chưa được cài. Chạy: pip install folium")
             return ''
 
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
-
         nodes = self.problem.nodes
         active_routes = [r for r in self.solution.routes if not r.is_empty]
 
-        # Depot marker
+        # ── Phát hiện dữ liệu synthetic (Euclidean) ──────────────────────────
+        if auto_detect_coords:
+            all_x = [n.x for n in nodes]
+            all_y = [n.y for n in nodes]
+            x_range = max(all_x) - min(all_x)
+            y_range = max(all_y) - min(all_y)
+
+            # Tọa độ lat/lon thực: lat trong [-90,90], lon trong [-180,180]
+            # Tọa độ Solomon synthetic: thường trong phạm vi [0, 100]
+            is_synthetic = (
+                max(all_y) < 90 and min(all_y) >= 0
+                and max(all_x) < 180 and min(all_x) >= 0
+                and x_range < 200 and y_range < 200
+                and (y_range < 10 or x_range < 10  # Không đủ spread cho lat/lon
+                     or (max(all_y) < 60 and max(all_x) < 160
+                         and min(all_y) > 0 and min(all_x) > 0
+                         and x_range < 150 and y_range < 80))
+            )
+
+            # Kiểm tra chắc chắn hơn: lat/lon thực phải có ít nhất 1 chữ số
+            # thập phân sau dấu phẩy ≥ 4 (độ phân giải cao)
+            has_real_precision = any(
+                len(str(n.x).split('.')[-1]) >= 3 for n in nodes if '.' in str(n.x)
+            )
+
+            if not has_real_precision:
+                print("[Folium] ⚠ Phát hiện dữ liệu SYNTHETIC (tọa độ Euclidean, không phải lat/lon).")
+                print("[Folium]   Bản đồ Folium chỉ chính xác với dữ liệu thực tế từ OSRMClient.")
+                print("[Folium]   Dùng plot_routes_matplotlib() cho dữ liệu Solomon/synthetic.")
+                print("[Folium]   Tiếp tục render với tọa độ scaled về vùng TP.HCM...")
+                # Scale tọa độ về vùng TP.HCM để có thể hiển thị trên bản đồ
+                x_arr = np.array(all_x)
+                y_arr = np.array(all_y)
+                # Map [min,max] → vùng [106.5, 107.0] x [10.6, 10.9] (TP.HCM bbox)
+                x_scaled = 106.5 + (x_arr - x_arr.min()) / (x_arr.max() - x_arr.min() + 1e-9) * 0.5
+                y_scaled = 10.6 + (y_arr - y_arr.min()) / (y_arr.max() - y_arr.min() + 1e-9) * 0.3
+                # Tạo mapping node_id → scaled coords
+                scaled_coords = {n.id: (float(y_scaled[i]), float(x_scaled[i]))
+                                 for i, n in enumerate(nodes)}
+                synthetic_mode = True
+            else:
+                scaled_coords = {n.id: (n.y, n.x) for n in nodes}
+                synthetic_mode = False
+        else:
+            scaled_coords = {n.id: (n.y, n.x) for n in nodes}
+            synthetic_mode = False
+
+        # ── Tâm bản đồ ────────────────────────────────────────────────────────
+        if center_lat is None or center_lon is None:
+            all_lats = [c[0] for c in scaled_coords.values()]
+            all_lons = [c[1] for c in scaled_coords.values()]
+            center_lat = sum(all_lats) / len(all_lats)
+            center_lon = sum(all_lons) / len(all_lons)
+
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+
+        # ── Depot marker ──────────────────────────────────────────────────────
         depot = self.problem.depot
+        dlat, dlon = scaled_coords[depot.id]
         folium.Marker(
-            location=[depot.y, depot.x],  # lat, lon
-            popup=f'<b>Depot</b>',
+            location=[dlat, dlon],
+            popup=folium.Popup('<b>Depot</b><br>Điểm xuất phát', max_width=200),
             icon=folium.Icon(color='black', icon='home', prefix='fa'),
+            tooltip='Depot',
         ).add_to(m)
 
-        # Routes
+        # ── Routes ────────────────────────────────────────────────────────────
         for idx, route in enumerate(active_routes):
             color = ROUTE_COLORS[idx % len(ROUTE_COLORS)]
+            route_dist = route.total_distance(self.problem)
+            route_load = route.total_load(self.problem)
+            arrival_times = route.arrival_times(self.problem)
 
             # Customer markers
-            for nid in route.customers:
+            for order, nid in enumerate(route.customers, 1):
                 node = nodes[nid]
+                lat, lon = scaled_coords[nid]
+                arrival = arrival_times[order] if order < len(arrival_times) else 0
+                popup_html = (
+                    f'<b>Node {nid}</b> (Xe {route.vehicle.id}, điểm #{order})<br>'
+                    f'Cầu: {node.demand:.0f}<br>'
+                    f'TW: [{node.ready_time:.0f} – {node.due_time:.0f}]<br>'
+                    f'Đến lúc: {arrival:.1f}<br>'
+                    f'Phục vụ: {node.service_time:.0f}'
+                )
                 folium.CircleMarker(
-                    location=[node.y, node.x],
-                    radius=8,
+                    location=[lat, lon],
+                    radius=9,
                     color=color,
                     fill=True,
-                    fill_opacity=0.8,
-                    popup=(f'<b>Node {nid}</b><br>'
-                           f'Demand: {node.demand}<br>'
-                           f'TW: [{node.ready_time:.0f}, {node.due_time:.0f}]'),
+                    fill_color=color,
+                    fill_opacity=0.85,
+                    popup=folium.Popup(popup_html, max_width=220),
+                    tooltip=f'Node {nid} (Xe {route.vehicle.id})',
+                ).add_to(m)
+                # So thu tu
+                div_html = (
+                    '<div style="font-size:9px;font-weight:bold;color:white;'
+                    f'text-align:center;line-height:18px;">{order}</div>'
+                )
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=folium.DivIcon(
+                        html=div_html,
+                        icon_size=(18, 18),
+                        icon_anchor=(9, 9),
+                    ),
                 ).add_to(m)
 
             # Route polyline
-            coords = [[nodes[nid].y, nodes[nid].x] for nid in route.nodes]
+            coords = [scaled_coords[nid] for nid in route.nodes]
             folium.PolyLine(
                 locations=coords,
                 color=color,
-                weight=3,
-                opacity=0.8,
-                tooltip=f'Xe {route.vehicle.id}: {route.num_customers} điểm',
+                weight=3.5,
+                opacity=0.85,
+                tooltip=(f'Xe {route.vehicle.id}: {route.num_customers} điểm | '
+                         f'dist={route_dist:.1f} | load={route_load:.0f}'),
             ).add_to(m)
 
-        # Title
+        # ── Tiêu đề bản đồ ────────────────────────────────────────────────────
+        synthetic_note = ' <span style="color:orange">[Synthetic – tọa độ scaled]</span>' if synthetic_mode else ''
         title_html = f'''
         <div style="position: fixed; top: 10px; left: 50px; z-index: 1000;
-             background: white; padding: 10px; border-radius: 5px; border: 2px solid grey;">
-            <h4>{self.problem.name}</h4>
-            <p>Tổng khoảng cách: {self.solution.total_distance():.2f}</p>
-            <p>{len(active_routes)} xe | {len(self.problem.customers)} điểm giao</p>
+             background: white; padding: 10px 14px; border-radius: 8px;
+             border: 2px solid #555; box-shadow: 2px 2px 6px rgba(0,0,0,0.3);">
+            <h4 style="margin:0 0 4px">{self.problem.name}{synthetic_note}</h4>
+            <p style="margin:2px 0">📏 Tổng khoảng cách: <b>{self.solution.total_distance():.2f}</b></p>
+            <p style="margin:2px 0">🚚 {len(active_routes)} xe &nbsp;|&nbsp; 📦 {len(self.problem.customers)} điểm giao</p>
         </div>
         '''
         m.get_root().html.add_child(folium.Element(title_html))
