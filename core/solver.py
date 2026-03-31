@@ -120,17 +120,27 @@ def greedy_nearest_neighbor(problem: VRPProblem) -> Solution:
             if vehicle_idx >= len(solution.routes):
                 # Hết xe → thêm customer vào route cuối (infeasible, solver sẽ sửa)
                 vehicle_idx = len(solution.routes) - 1
-                # Thêm vào route gần nhất
+                route = solution.routes[vehicle_idx]
+                current_node = problem.depot.id
+                # Thêm customer gần nhất vào route cuối (bất kể capacity)
                 best_next = min(
                     unvisited,
                     key=lambda cid: dist[current_node, cid]
                 )
-            route = solution.routes[vehicle_idx]
-            current_node = problem.depot.id
+            else:
+                route = solution.routes[vehicle_idx]
+                current_node = problem.depot.id
+            # Thử lại với xe mới; nếu vẫn None thì dùng nearest bất kể capacity
+            if best_next is None:
+                best_next = min(
+                    unvisited,
+                    key=lambda cid: dist[current_node, cid]
+                )
 
         route.append_customer(best_next)
         unvisited.remove(best_next)
         current_node = best_next
+
 
     return solution
 

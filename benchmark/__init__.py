@@ -1,12 +1,12 @@
-# core/__init__.py
-from core.models import Node, Vehicle, VRPProblem, Route, Solution
-from core.solver import UTSSolver, UTSConfig, greedy_nearest_neighbor
-from core.tabu_list import TabuList, ZobristHasher, AspirationCriteria
-from core.penalty import PenaltyController
+# benchmark/__init__.py
+from benchmark.solomon_loader import load_solomon, create_sample_solomon, get_bks, compute_gap
+from benchmark.runner import BenchmarkRunner, BenchmarkResult
 
 __all__ = [
-    'Node', 'Vehicle', 'VRPProblem', 'Route', 'Solution',
-    'UTSSolver', 'UTSConfig', 'greedy_nearest_neighbor',
-    'TabuList', 'ZobristHasher', 'AspirationCriteria',
-    'PenaltyController',
+    'load_solomon',
+    'create_sample_solomon',
+    'get_bks',
+    'compute_gap',
+    'BenchmarkRunner',
+    'BenchmarkResult',
 ]

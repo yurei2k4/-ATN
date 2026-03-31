@@ -1,12 +1,13 @@
-# core/__init__.py
-from core.models import Node, Vehicle, VRPProblem, Route, Solution
-from core.solver import UTSSolver, UTSConfig, greedy_nearest_neighbor
-from core.tabu_list import TabuList, ZobristHasher, AspirationCriteria
-from core.penalty import PenaltyController
+# plugins/__init__.py
+from plugins.base import PluginRegistry, IConstraintPlugin
+from plugins.capacity import CapacityPlugin
+from plugins.time_window import TimeWindowPlugin
+from plugins.asymmetric import AsymmetricRoutePlugin
 
 __all__ = [
-    'Node', 'Vehicle', 'VRPProblem', 'Route', 'Solution',
-    'UTSSolver', 'UTSConfig', 'greedy_nearest_neighbor',
-    'TabuList', 'ZobristHasher', 'AspirationCriteria',
-    'PenaltyController',
+    'PluginRegistry',
+    'IConstraintPlugin',
+    'CapacityPlugin',
+    'TimeWindowPlugin',
+    'AsymmetricRoutePlugin',
 ]

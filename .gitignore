@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Numba JIT cache
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+
+# Output files (kết quả benchmark, plots)
+output/*.png
+output/*.html
+output/*.json
+
+# Data (dataset Solomon – thường không commit do kích thước lớn)
+# data/solomon/*.txt   ← uncomment nếu muốn bỏ data
+
+# OS
+.DS_Store
+Thumbs.db
