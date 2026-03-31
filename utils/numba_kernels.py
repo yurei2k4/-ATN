@@ -28,7 +28,7 @@ from typing import Tuple
 try:
     from numba import njit, prange
     NUMBA_AVAILABLE = True
-    print("[Numba] ✓ JIT acceleration enabled")
+    print("[Numba] OK - JIT acceleration enabled")
 except ImportError:
     NUMBA_AVAILABLE = False
     print("[Numba] ⚠ Numba chưa cài. Dùng numpy fallback (chậm hơn ~5-10x)")

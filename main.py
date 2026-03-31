@@ -20,6 +20,10 @@ import os
 import sys
 import logging
 
+# Ép stdout xuất tiếng Việt UTF-8 (sửa lỗi in ra cmd Windows)
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 # Thêm thư mục gốc vào Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
