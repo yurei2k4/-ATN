@@ -6,13 +6,16 @@ Entry point chính của framework UTS-VRP.
 Các chế độ chạy:
     1. quick_test  : Test nhanh với dữ liệu mẫu (không cần file)
     2. benchmark   : Benchmark trên dataset Solomon
-    3. single      : Giải một instance cụ thể
+    3. single      : Giải một instance Solomon cụ thể
+    4. real        : Chạy với dữ liệu giao hàng THỰC TẾ tại TP.HCM / Hà Nội
+                     (khoảng cách thực từ OSRM, xuất bản đồ Folium)
     
 Ví dụ:
     python main.py                              # quick test
     python main.py --mode benchmark             # benchmark tất cả
     python main.py --mode single --file C101    # giải C101
-    python main.py --mode single --file C101 --iterations 2000
+    python main.py --mode real --city hcmc      # dữ liệu thực TP.HCM
+    python main.py --mode real --city hanoi     # dữ liệu thực Hà Nội
 """
 
 import argparse
@@ -37,6 +40,7 @@ from benchmark.solomon_loader import (
 )
 from benchmark.runner import BenchmarkRunner
 from utils.visualizer import Visualizer
+from utils.osrm_client import OSRMClient, VietnamCityPresets
 
 logging.basicConfig(
     level=logging.INFO,
@@ -208,6 +212,97 @@ def run_single(args):
 
 
 # ===========================================================================
+# REAL-WORLD MODE
+# ===========================================================================
+
+def run_real(args):
+    """
+    Chạy với dữ liệu giao hàng THỰC TẾ tại TP.HCM hoặc Hà Nội.
+    Khoảng cách thực lấy từ OSRM (Open Source Routing Machine).
+    Kết quả xuất bản đồ tương tác Folium ra output/.
+    """
+    city = (args.city or 'hcmc').lower()
+    print(f"\n" + "="*60)
+    print(f"REAL-WORLD MODE – {'TP. Ho Chi Minh' if 'hcmc' in city else 'Ha Noi'}")
+    print("="*60)
+
+    # Lấy preset tọa độ
+    if 'hcmc' in city or 'saigon' in city:
+        locations, demands, vehicles = VietnamCityPresets.get_hcmc_sample()
+        name = 'HCMC_Real'
+    else:
+        locations, demands, vehicles = VietnamCityPresets.get_hanoi_sample()
+        name = 'Hanoi_Real'
+
+    print(f"  {len(locations)-1} diem giao hang, {len(vehicles)} xe")
+    print("  Dang lay ma tran khoang cach tu OSRM...")
+
+    # Lấy ma trận từ OSRM (có fallback Haversine nếu mất mạng)
+    client = OSRMClient()
+    try:
+        problem = client.build_vrp_problem(
+            locations=locations,
+            demands=demands,
+            vehicles=vehicles,
+            problem_name=name,
+        )
+        print("  Ma tran OSRM thu duoc thanh cong.")
+    except Exception as e:
+        print(f"  OSRM that bai ({e}), dung Haversine fallback...")
+        from utils.osrm_client import build_real_world_problem
+        problem = build_real_world_problem(city=city, use_osrm=False)
+
+    print(f"  Problem type : {problem.problem_type}")
+    print(f"  Nodes        : {problem.num_nodes} ({len(problem.customers)} customers)")
+    is_asym = (problem.problem_type == 'AVRP')
+    print(f"  Matrix sym?  : {'No (asymmetric)' if is_asym else 'Yes'}")
+
+    # Setup plugins
+    registry = PluginRegistry()
+    registry.register(CapacityPlugin(violation_scale=10.0))
+    if is_asym:
+        registry.register(AsymmetricRoutePlugin())
+        print("  Plugins: CapacityPlugin + AsymmetricRoutePlugin")
+    else:
+        print("  Plugins: CapacityPlugin")
+
+    config = UTSConfig(
+        max_iterations=args.iterations,
+        max_time_seconds=args.time_limit,
+        max_no_improve=200,
+        verbose=True,
+        log_interval=50,
+    )
+
+    solver = UTSSolver(problem, config, registry)
+    best = solver.solve()
+
+    if best:
+        viz = Visualizer(problem, best, solver)
+        viz.print_solution_table()
+
+        stats = solver.get_stats()
+        print(f"\nKet qua:")
+        print(f"  Tong khoang cach : {stats['best_distance']:.2f} km")
+        print(f"  So xe su dung    : {stats['vehicles_used']}")
+        print(f"  Thoi gian chay   : {stats['total_time']:.2f}s")
+
+        # Lưu bản đồ Folium và matplotlib
+        os.makedirs('output', exist_ok=True)
+        map_path = f'output/routes_{name.lower()}.html'
+        viz.plot_routes_folium(map_path)
+        print(f"  Ban do Folium    : {map_path}")
+        print(f"  -> Mo file {map_path} bang trinh duyet de xem ban do tuong tac!")
+
+        if args.save_plots:
+            viz.plot_routes_matplotlib(f'output/routes_{name.lower()}.png')
+            viz.plot_convergence(f'output/convergence_{name.lower()}.png')
+            print("  Plots da luu vao output/")
+
+    return best, solver
+
+
+# ===========================================================================
 # MAIN
 # ===========================================================================
 
@@ -217,26 +312,28 @@ def main():
     )
 
     parser.add_argument(
-        '--mode', choices=['quick_test', 'benchmark', 'single'],
+        '--mode', choices=['quick_test', 'benchmark', 'single', 'real'],
         default='quick_test',
-        help='Chế độ chạy'
+        help='Che do chay: quick_test | benchmark | single | real'
     )
     parser.add_argument('--file', type=str, default=None,
-                        help='Tên instance Solomon (ví dụ: C101)')
+                        help='Ten instance Solomon (vi du: C101)')
+    parser.add_argument('--city', type=str, default='hcmc',
+                        help='Thanh pho cho che do real: hcmc | hanoi')
     parser.add_argument('--data-dir', type=str, default='data/solomon',
-                        help='Thư mục chứa dữ liệu Solomon')
+                        help='Thu muc chua du lieu Solomon')
     parser.add_argument('--iterations', type=int, default=500,
-                        help='Số iterations tối đa')
+                        help='So iterations toi da')
     parser.add_argument('--time-limit', type=float, default=60.0,
-                        help='Giới hạn thời gian (giây)')
+                        help='Gioi han thoi gian (giay)')
     parser.add_argument('--instances', type=str, default=None,
-                        help='Danh sách instances benchmark, phân cách bởi dấu phẩy')
+                        help='Danh sach instances benchmark, phan cach boi dau phay')
     parser.add_argument('--save-plots', action='store_true',
-                        help='Lưu đồ thị hội tụ và bản đồ lộ trình')
+                        help='Luu do thi hoi tu va ban do lo trinh')
     parser.add_argument('--save-results', action='store_true',
-                        help='Lưu kết quả benchmark ra JSON')
+                        help='Luu ket qua benchmark ra JSON')
     parser.add_argument('--asymmetric', action='store_true',
-                        help='Bật AsymmetricRoutePlugin')
+                        help='Bat AsymmetricRoutePlugin')
 
     args = parser.parse_args()
 
@@ -246,6 +343,8 @@ def main():
         run_benchmark(args)
     elif args.mode == 'single':
         run_single(args)
+    elif args.mode == 'real':
+        run_real(args)
 
 
 if __name__ == '__main__':
