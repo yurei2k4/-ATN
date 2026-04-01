@@ -344,7 +344,11 @@ class Visualizer:
             center_lat = sum(all_lats) / len(all_lats)
             center_lon = sum(all_lons) / len(all_lons)
 
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+        m = folium.Map(
+            location=[center_lat, center_lon], 
+            zoom_start=14, 
+            tiles='CartoDB positron'
+        )
 
         # ── Depot marker ──────────────────────────────────────────────────────
         depot = self.problem.depot
