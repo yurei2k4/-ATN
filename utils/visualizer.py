@@ -14,7 +14,9 @@ Sử dụng:
 
 from __future__ import annotations
 import os
-from typing import TYPE_CHECKING, List, Optional, Dict, Any
+import json
+import urllib.request
+from typing import TYPE_CHECKING, List, Optional, Dict, Any, Tuple
 import numpy as np
 
 if TYPE_CHECKING:
@@ -22,7 +24,41 @@ if TYPE_CHECKING:
     from core.solver import UTSSolver
 
 
-# Màu sắc cho các routes
+def _fetch_road_geometry(
+    waypoints: List[Tuple[float, float]],
+    base_url: str = 'https://router.project-osrm.org',
+    profile: str = 'driving',
+) -> Optional[List[Tuple[float, float]]]:
+    """
+    Goi OSRM Route API de lay geometry duong di thuc te.
+
+    Args:
+        waypoints: List [(lat, lon), ...] theo thu tu (depot -> c1 -> ... -> depot)
+
+    Returns:
+        List [(lat, lon), ...] cac diem tren duong thuc te, hoac None neu loi.
+    """
+    if len(waypoints) < 2:
+        return None
+    coords_str = ';'.join(f'{lon},{lat}' for lat, lon in waypoints)
+    url = (f'{base_url}/route/v1/{profile}/{coords_str}'
+           '?overview=full&geometries=geojson')
+    try:
+        req = urllib.request.Request(
+            url, headers={'User-Agent': 'UTS-VRP-Visualizer/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        if data.get('code') != 'Ok':
+            return None
+        geojson_coords = data['routes'][0]['geometry']['coordinates']
+        # GeoJSON tra ve [lon, lat] -> doi sang [lat, lon] cho Folium
+        return [(lat, lon) for lon, lat in geojson_coords]
+    except Exception:
+        return None
+
+
+# Mau sac cho cac routes
 ROUTE_COLORS = [
     '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
     '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990',
@@ -363,15 +399,27 @@ class Visualizer:
                     ),
                 ).add_to(m)
 
-            # Route polyline
-            coords = [scaled_coords[nid] for nid in route.nodes]
+            # Route polyline: dung geometry duong thuc te neu la du lieu that
+            if not synthetic_mode:
+                waypoints = [scaled_coords[nid] for nid in route.nodes]
+                road_coords = _fetch_road_geometry(waypoints)
+            else:
+                road_coords = None
+
+            # Fallback ve duong thang neu OSRM khong tra ve
+            draw_coords = road_coords if road_coords else [
+                scaled_coords[nid] for nid in route.nodes
+            ]
+            line_style = {} if road_coords else {'dash_array': '6 4'}
+
             folium.PolyLine(
-                locations=coords,
+                locations=draw_coords,
                 color=color,
-                weight=3.5,
-                opacity=0.85,
-                tooltip=(f'Xe {route.vehicle.id}: {route.num_customers} điểm | '
+                weight=4 if road_coords else 3,
+                opacity=0.9 if road_coords else 0.6,
+                tooltip=(f'Xe {route.vehicle.id}: {route.num_customers} diem | '
                          f'dist={route_dist:.1f} | load={route_load:.0f}'),
+                **line_style,
             ).add_to(m)
 
         # ── Tiêu đề bản đồ ────────────────────────────────────────────────────
